@@ -20,11 +20,27 @@ defmodule CORSPlug do
   end
 
   def call(conn, options) do
-    conn = put_in(conn.resp_headers, conn.resp_headers ++ headers(conn, options))
+    parsed_options = resolve_runtime_options(options)
+
+    conn = put_in(
+      conn.resp_headers,
+      conn.resp_headers ++ headers(conn, parsed_options))
+
     case conn.method do
       "OPTIONS" -> conn |> send_resp(204, "") |> halt
       _method   -> conn
     end
+  end
+
+  defp resolve_runtime_options(options) do
+    options
+    |> Keyword.update!(:origin, &resolve_config/1)
+    |> Keyword.update!(:max_age, fn max_age ->
+      case resolve_config(max_age) do
+        number when is_number(number) -> number
+        string when is_binary(string) -> String.to_integer(string)
+      end
+    end)
   end
 
   # headers specific to OPTIONS request
@@ -85,5 +101,19 @@ defmodule CORSPlug do
 
   defp request_origin(%Plug.Conn{req_headers: headers}) do
     Enum.find_value(headers, fn({k, v}) -> k =~ ~r/origin/i && v end)
+  end
+
+  # allow config options to be resolved dynamically
+  defp resolve_config({:system, var}) do
+    System.get_env(var)
+  end
+  defp resolve_config({module, function}) do
+    resolve_config({module, function, []})
+  end
+  defp resolve_config({module, function, args}) do
+    apply(module, function, args)
+  end
+  defp resolve_config(config) do
+    config
   end
 end
